@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        @page {
+            size: A4 landscape;  /* Set page size to A4 landscape */
+            margin: 20mm;  /* Adjust margins as needed */
+            @frame footer {
+                -pdf-frame-content: footerContent;
+                bottom: 5mm;  /* Reduced from 10mm to 5mm */
+                margin-left: 20mm;
+                margin-right: 20mm;
+                height: 8mm;  /* Reduced from 10mm to 8mm */
+            }
+        }
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 8pt;
+            margin: 0;
+            padding: 0;
+        }
+        .content {
+            margin-bottom: 10mm;  /* Reduced from 15mm to 10mm */
+        }
+        .footer {
+            position: fixed;
+            bottom: 10mm;
+            left: 0;
+            right: 0;
+            width: 100%;
+            text-align: center;
+            font-size: 10px;
+            color: #555;
+            background-color: white;
+            padding: 5px 0;
+            margin: 0;
+            z-index: 1000;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        th, td {
+            padding: 4px;
+            text-align: left;
+            vertical-align: top;
+        }
+        tr {
+            border-bottom: 1px solid black;
+        }
+        table td {
+            border-bottom: 1px solid #ddd;
+        }
+        table th {
+            background-color: #f4f4f4;
+            border-bottom: 2px solid #ddd;
+        }
+        .title-column-data {
+            width: 12%;
+            font-weight: bold;
+        }
+        .logline-column-data {
+            width: 25%;
+        }
+        .cast-column-data {
+            width: 10%;
+        }
+        .director-column-data {
+            width: 10%;
+        }
+        .producers-column-data,
+        .executive-producers-column-data {
+            width: 13%;
+        }
+        .production-companies-column-data {
+            width: 17%;
+        }
+        @media (max-width: 768px) {
+            table, thead, tbody, th, td, tr {
+                display: block;
+            }
+            td {
+                padding-left: 50%;
+                position: relative;
+            }
+            td:before {
+                content: attr(data-label);
+                position: absolute;
+                left: 10px;
+                font-weight: bold;
+            }
+        }
+        .company-page {
+            page-break-after: always;  /* Changed back to always */
+            margin-bottom: 5mm;  /* Added small margin */
+        }
+        .bold-text {
+            font-weight: bold;
+        }
+        /* Add specific handling for the very last table */
+        {% for company_name, films in data_to_render.items() %}
+        {% if loop.last %}
+        #company-{{ loop.index }} {
+            page-break-after: avoid;
+        }
+        {% endif %}
+        {% endfor %}
+    </style>
+</head>
+<body>
+    <div class="content">
+        <p class="bold-text">Date: {{ date }}</p>
+
+        {% for company_name, films in data_to_render.items() %}
+        <div class="company-page" id="company-{{ loop.index }}">
+            <h1>{{ company_name }}</h1>
+            <table>
+                <thead>
+                    <tr>
+                        <th class="title-column">Film Title</th>
+                        <th class="logline-column">Logline</th>
+                        <th class="cast-column">Cast</th>
+                        <th class="director-column">Director</th>
+                        <th class="producers-column">Producers</th>
+                        <th class="executive-producers-column">Executive Producers</th>
+                        <th class="production-companies-column">Production Companies</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for film in films %}
+                    <tr>
+                        <td class="title-column-data" data-label="Film Title">{{ film.title }}</td>
+                        <td class="logline-column-data" data-label="Logline">{{ film.logline }}</td>
+                        <td class="cast-column-data" data-label="Cast">
+                            {% for star in film.cast %}
+                                {{ star }}<br>
+                            {% endfor %}
+                        </td>
+                        <td class="director-column-data" data-label="Director">{{ film.director }}</td>
+                        <td class="producers-column-data" data-label="Producers">
+                            {% for producer in film.producers %}
+                                {{ producer }}<br>
+                            {% endfor %}
+                        </td>
+                        <td class="executive-producers-column-data" data-label="Executive Producers">
+                            {% for executive_producer in film.executive_producers %}
+                                {{ executive_producer }}<br>
+                            {% endfor %}
+                        </td>
+                        <td class="production-companies-column-data" data-label="Production Companies">
+                            {% for production_company in film.production_companies %}
+                                {{ production_company }}<br>
+                            {% endfor %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div id="footerContent" class="footer">
+        Page <pdf:pagenumber/> of <pdf:pagecount/>
+    </div>
+</body>
+</html>

@@ -1,0 +1,33 @@
+[tool.poetry]
+name = "imdb-public"
+version = "0.0.1"
+description = "IMDB info extractor"
+authors = ["Aunonimus"]
+license = "Proprietary"
+readme = "README.md"
+package-mode = false
+
+[[tool.poetry.source]]
+name = "PyPI"
+priority = "primary"
+
+[tool.poetry.dependencies]
+python = ">=3.9"
+scrapy = "*"
+fnc = "*"
+pandas = "*"
+jinja2 = "*"
+xhtml2pdf = "*"
+openpyxl = "*"
+flask = "*"
+pyyaml = "*"
+demjson3 = "*"
+Flask-SocketIO = "*"
+ruff = "*"
+
+[tool.ruff.format]
+quote-style = "single"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
