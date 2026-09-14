@@ -1,6 +1,7 @@
+import json
 import re
 from urllib import parse
-import json
+
 import numpy as np
 import pandas as pd
 import scrapy
@@ -8,6 +9,8 @@ from fnc import get
 from scrapy import signals
 from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
+
+from imdb_extractor.live import require_live
 
 
 class IMDB_Producers_Info_Extractor(scrapy.Spider):
@@ -20,7 +23,10 @@ class IMDB_Producers_Info_Extractor(scrapy.Spider):
 
     file_path = '/imdb_extractor/data/producers.csv'
     url_api_pattern = 'https://caching.graphql.imdb.com/?{}'
-    results = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.results = []
 
     @classmethod
     def from_crawler(cls, crawler, *args, **kwargs):
@@ -29,7 +35,8 @@ class IMDB_Producers_Info_Extractor(scrapy.Spider):
         crawler.signals.connect(spider.spider_idle, signals.spider_idle)
         return spider
 
-    def start_requests(self):
+    async def start(self):
+        require_live()
         producers_info = pd.read_csv(self.file_path).to_dict('records')
         for i, producer in enumerate(producers_info):
             producer_id = self.get_producer_id_from_link(producer['producer_link'])
@@ -117,9 +124,9 @@ class IMDB_Producers_Info_Extractor(scrapy.Spider):
         return params
 
     def spider_idle(self, spider):
-        pd.DataFrame(self.results).reset_index().fillna(np.nan).replace(
-            [np.nan], [None]
-        ).drop(columns=['index']).to_csv('data/result.csv')
+        pd.DataFrame(self.results).reset_index().fillna(np.nan).replace([np.nan], [None]).drop(
+            columns=['index']
+        ).to_csv('data/result.csv', index=False)
 
     @staticmethod
     def get_api_headers():
@@ -148,6 +155,7 @@ class IMDB_Producers_Info_Extractor(scrapy.Spider):
 
 
 if __name__ == '__main__':
+    require_live()
     s = get_project_settings()
     process = CrawlerProcess(s)
     crawler = process.create_crawler(IMDB_Producers_Info_Extractor)

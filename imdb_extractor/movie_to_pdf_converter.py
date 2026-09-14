@@ -1,63 +1,108 @@
-from collections import defaultdict
-from datetime import datetime
+"""Render a local movie export as an escaped, self-contained PDF report."""
 
-import demjson3
-import pandas as pd
+import ast
+import json
+from collections import defaultdict
+from datetime import date
+from io import BytesIO
+from pathlib import Path
+
 from jinja2 import Environment, FileSystemLoader
 from xhtml2pdf import pisa
 
-from settings import get_full_source_pdf_file_name, get_full_output_pdf_file_name
+from imdb_extractor.tabular import read_table
+from settings import get_full_output_pdf_file_name, get_full_source_pdf_file_name
+
+TEMPLATES = Path(__file__).resolve().parents[1] / 'templates'
 
 
-def execute():
-    source_filename = get_full_source_pdf_file_name()
-    output_filename = get_full_output_pdf_file_name()
+def text_value(value, default='—'):
+    return value.strip() if isinstance(value, str) and value.strip() else default
 
-    def prepare_data(items):
-        def check_list(d, def_value=None):
-            if def_value is None:
-                def_value = ['-']
-            if not isinstance(d, str):
-                return def_value
-            return demjson3.decode(d) or def_value
 
-        def check_str(dr, def_value='-'):
-            if not isinstance(dr, str):
-                return def_value
-            return dr or def_value
+def list_value(value):
+    """Read JSON arrays and historical Python list literals without evaluating code."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return ['—']
+    if isinstance(value, str):
+        if len(value) > 100_000:
+            raise ValueError('A list field exceeds the report size limit.')
+        try:
+            value = json.loads(value)
+        except (json.JSONDecodeError, RecursionError):
+            try:
+                value = ast.literal_eval(value)
+            except (ValueError, SyntaxError, RecursionError) as error:
+                raise ValueError(
+                    'List fields must be JSON arrays or Python list literals.'
+                ) from error
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError('List fields must contain a list of text values.')
+    return [item.strip() for item in value if item.strip()] or ['—']
 
-        result = defaultdict(list)
 
-        for item in items:
-            result[item['company_name']].append(
+def prepare_data(items):
+    result = defaultdict(list)
+    for row_number, item in enumerate(items, start=1):
+        try:
+            result[text_value(item.get('company_name'), 'Unspecified company')].append(
                 {
-                    'title': item['name'],
-                    'logline': check_str(item['summary']),
-                    'cast': check_list(item['stars']),
-                    'director': check_str(item['director']),
-                    'producers': check_list(item['producer']),
-                    'executive_producers': check_list(item['executive_producer']),
-                    'production_companies': check_list(item['company_production']),
-                    'status': item['status'],
+                    'title': text_value(item.get('name')),
+                    'logline': text_value(item.get('summary')),
+                    'cast': list_value(item.get('stars')),
+                    'director': text_value(item.get('director')),
+                    'producers': list_value(item.get('producer')),
+                    'executive_producers': list_value(item.get('executive_producer')),
+                    'production_companies': list_value(item.get('company_production')),
+                    'status': text_value(item.get('status')),
                 }
             )
+        except ValueError as error:
+            raise ValueError(f'Report row {row_number}: {error}') from error
+    return dict(result)
 
-        return dict(result)
 
-    template = Environment(loader=FileSystemLoader('../templates')).get_template(
-        'imdb_pdf.jinja'
+def render_html(items, report_date=None):
+    environment = Environment(loader=FileSystemLoader(TEMPLATES), autoescape=True)
+    template = environment.get_template('imdb_pdf.jinja')
+    return template.render(
+        date=(report_date or date.today()).strftime('%B %d, %Y'),
+        data_to_render=prepare_data(items),
     )
 
-    data = pd.read_csv(source_filename).to_dict('records')
-    data_to_render = prepare_data(data)
-    output = template.render(
-        date=datetime.now().strftime('%B %-d, %Y'), data_to_render=data_to_render
-    )
 
-    with open(output_filename, 'wb') as pdf_file:
-        pisa.CreatePDF(output, dest=pdf_file)
+def deny_resource(uri, relative_uri):
+    # This report uses no images, stylesheets, fonts, or other external assets.
+    raise ValueError('External and local resource loading is disabled in PDF reports.')
 
-    return output_filename
+
+def execute(source_filename=None, output_filename=None):
+    source_filename = source_filename or get_full_source_pdf_file_name()
+    output_filename = output_filename or get_full_output_pdf_file_name()
+    if not output_filename:
+        raise ValueError('Choose a PDF output filename first.')
+    output_path = Path(output_filename)
+    if output_path.suffix.lower() != '.pdf':
+        raise ValueError('The report output must use a .pdf extension.')
+    if source_filename and Path(source_filename).resolve() == output_path.resolve():
+        raise ValueError('The report output must not replace its source file.')
+    data = read_table(source_filename)
+    missing = {'name', 'company_name'} - set(data.columns)
+    if missing:
+        raise ValueError('Movie export is missing columns: ' + ', '.join(sorted(missing)))
+    if data.empty:
+        raise ValueError('The movie export contains no rows to report.')
+    html = render_html(data.to_dict('records'))
+    buffer = BytesIO()
+    try:
+        result = pisa.CreatePDF(html, dest=buffer, encoding='utf-8', link_callback=deny_resource)
+    except Exception as error:
+        raise RuntimeError('PDF rendering failed; check the report data.') from error
+    if result.err:
+        raise RuntimeError('PDF rendering failed; no report was written.')
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(buffer.getvalue())
+    return str(output_path)
 
 
 if __name__ == '__main__':

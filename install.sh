@@ -1,6 +1,6 @@
-pip install -U pip
-pip install -U poetry
-if [ -f poetry.lock ]; then
-    rm poetry.lock
-fi
-poetry install
+#!/usr/bin/env sh
+set -eu
+
+cd "$(dirname "$0")"
+poetry check --lock
+poetry install --no-interaction

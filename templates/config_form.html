@@ -1,792 +1,207 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-
-    <title>Edit Config</title>
-
-    <style>
-        :root {
-            --primary-color: #4CAF50;
-            --primary-hover: #45a049;
-            --secondary-color: #007BFF;
-            --secondary-hover: #0056b3;
-            --text-color: #333;
-            --background-color: #f4f4f4;
-            --white: #fff;
-            --border-radius: 8px;
-            --box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            --transition: all 0.3s ease;
-        }
-
-        .loading-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            background-color: rgba(0, 0, 0, 0.5);
-            backdrop-filter: blur(3px);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 9999;
-        }
-
-        .loading-content {
-            background-color: var(--white);
-            padding: 0.875rem 1.5rem;
-            border-radius: 100px;
-            display: flex;
-            align-items: center;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-            animation: fadeInScale 0.3s ease-out;
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: fit-content;
-        }
-
-        .loading-text-container {
-            display: flex;
-            align-items: center;
-            justify-content: flex-start;
-            position: relative;
-            gap: 0.75rem;
-            padding: 0 0.25rem;
-        }
-
-        .loading-spinner {
-            width: 18px;
-            height: 18px;
-            border: 2.5px solid #f3f3f3;
-            border-top: 2.5px solid var(--secondary-color);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-
-        .loading-text {
-            color: #000000;
-            font-size: 0.95rem;
-            font-weight: 600;
-            margin: 0;
-            padding-right: 0.25rem;
-            display: flex;
-            align-items: center;
-        }
-
-        .loading-dots {
-            display: inline-flex;
-            gap: 4px;
-            align-items: center;
-            margin-left: 4px;
-            transform: translateY(2px);
-        }
-
-        .loading-dots span {
-            width: 3px;
-            height: 3px;
-            border-radius: 50%;
-            background-color: #000000;
-            animation: dots 1.5s infinite;
-            display: inline-block;
-        }
-
-        .loading-dots span:nth-child(2) {
-            animation-delay: 0.2s;
-        }
-
-        .loading-dots span:nth-child(3) {
-            animation-delay: 0.4s;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        @keyframes dots {
-            0%, 100% { opacity: 0.2; }
-            50% { opacity: 1; }
-        }
-
-        .download-link span.icon {
-            font-size: 1.2rem;
-            display: inline-block;
-            transform: translateY(1px);
-        }
-
-        .spinner {
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            position: relative;
-            animation: rotate 1s linear infinite;
-        }
-
-        .spinner::before {
-            content: "";
-            box-sizing: border-box;
-            position: absolute;
-            inset: 0px;
-            border-radius: 50%;
-            border: 3px solid var(--white);
-            animation: prixClipFix 2s linear infinite;
-        }
-
-        .loading-overlay p {
-            color: var(--white);
-            margin-top: 1.5rem;
-            font-size: 1.2rem;
-            font-weight: 500;
-            letter-spacing: 0.5px;
-            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-            animation: pulse 2s ease-in-out infinite;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 0;
-            padding: 2rem;
-            background-color: var(--background-color);
-            color: var(--text-color);
-            line-height: 1.6;
-        }
-
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 0 1rem;
-        }
-
-        .section {
-            background-color: var(--white);
-            padding: 2rem;
-            border-radius: var(--border-radius);
-            box-shadow: var(--box-shadow);
-            margin-bottom: 2rem;
-            transition: var(--transition);
-        }
-
-        .section:hover {
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-        }
-
-        .section-parse, .section-pdf {
-            background-color: var(--white);
-            padding: 2rem;
-            border-radius: var(--border-radius);
-            box-shadow: var(--box-shadow);
-            margin-bottom: 2rem;
-            transition: var(--transition);
-        }
-
-        .section-parse:hover, .section-pdf:hover {
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-        }
-
-        h1 {
-            text-align: center;
-            color: var(--text-color);
-            margin-bottom: 2rem;
-            font-size: 2.5rem;
-            font-weight: 600;
-        }
-
-        h2 {
-            color: var(--text-color);
-            border-bottom: 2px solid var(--primary-color);
-            padding-bottom: 0.5rem;
-            margin-bottom: 1.5rem;
-            font-size: 1.8rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        h2::before {
-            content: "📋";
-            font-size: 1.5rem;
-        }
-
-        .section-pdf h2::before {
-            content: "📄";
-        }
-
-        .form-group {
-            margin-bottom: 1.5rem;
-            padding: 1rem;
-            background-color: #f8f9fa;
-            border-radius: var(--border-radius);
-            border: 1px solid #eee;
-            transition: var(--transition);
-        }
-
-        .form-group:hover {
-            background-color: #fff;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-        }
-
-        .form-group input[type="text"] {
-            width: 100%;
-            box-sizing: border-box;
-            padding: 0.75rem;
-            border: 1px solid #ddd;
-            border-radius: var(--border-radius);
-            font-size: 1rem;
-            transition: var(--transition);
-            word-break: break-all;
-            max-width: 100%;
-        }
-
-        .pdf-input {
-            word-break: break-all;
-            overflow-wrap: break-word;
-        }
-
-        @media (max-width: 768px) {
-            .form-group {
-                padding: 0.75rem;
-            }
-            
-            .form-group input[type="text"] {
-                font-size: 0.9rem;
-                padding: 0.5rem;
-            }
-        }
-
-        label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-            color: var(--text-color);
-            font-size: 1.1rem;
-        }
-
-        .select-wrapper {
-            position: relative;
-            width: 100%;
-        }
-
-        select {
-            appearance: none;
-            width: 100%;
-            padding: 0.75rem 1rem;
-            font-size: 1rem;
-            border: 2px solid #ddd;
-            border-radius: var(--border-radius);
-            background-color: var(--white);
-            cursor: pointer;
-            transition: var(--transition);
-            color: var(--text-color);
-            font-family: inherit;
-        }
-
-        select:hover {
-            border-color: var(--secondary-color);
-        }
-
-        select:focus {
-            outline: none;
-            border-color: var(--secondary-color);
-            box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25);
-        }
-
-        .select-wrapper::after {
-            content: "▼";
-            font-size: 0.8rem;
-            color: var(--secondary-color);
-            position: absolute;
-            right: 1rem;
-            top: 50%;
-            transform: translateY(-50%);
-            pointer-events: none;
-            transition: var(--transition);
-        }
-
-        .select-wrapper:hover::after {
-            color: var(--secondary-hover);
-        }
-
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 0.75rem 1rem;
-            border-radius: var(--border-radius);
-            background-color: #f8f9fa;
-            cursor: pointer;
-            transition: background-color 0.2s ease;
-            border: 1px solid #ddd;
-        }
-
-        .checkbox-group:hover {
-            background-color: #e9ecef;
-            border-color: var(--secondary-color);
-        }
-
-        .checkbox-group input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
-            cursor: pointer;
-        }
-
-        .checkbox-group label {
-            margin: 0;
-            cursor: pointer;
-            user-select: none;
-            width: 100%;
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
-        .button-container {
-            display: flex;
-            gap: 2rem;
-            justify-content: center;
-            margin-top: 2rem;
-        }
-
-        .action-group {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
-        .download-link {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.6rem 1rem;
-            background-color: var(--white);
-            color: var(--secondary-color);
-            border: 2px solid var(--secondary-color);
-            border-radius: var(--border-radius);
-            text-decoration: none;
-            font-size: 0.9rem;
-            font-weight: 500;
-            transition: var(--transition);
-            min-width: 150px;
-            justify-content: center;
-        }
-
-        .download-link:hover {
-            background-color: var(--secondary-color);
-            color: var(--white);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0, 123, 255, 0.25);
-        }
-
-        .download-link:active {
-            transform: translateY(0);
-        }
-
-        .download-link i {
-            font-size: 1.1rem;
-        }
-
-        button {
-            background-color: var(--primary-color);
-            color: var(--white);
-            border: none;
-            padding: 0.75rem 1.5rem;
-            font-size: 1rem;
-            border-radius: var(--border-radius);
-            cursor: pointer;
-            transition: var(--transition);
-            min-width: 150px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            box-shadow: var(--box-shadow);
-        }
-
-        button:hover {
-            background-color: var(--primary-hover);
-            transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-        }
-
-        button:active {
-            transform: translateY(0);
-        }
-
-        .small-link {
-            font-size: 0.9rem;
-            color: var(--secondary-color);
-            text-decoration: none;
-            transition: var(--transition);
-        }
-
-        .small-link:hover {
-            color: var(--secondary-hover);
-            text-decoration: underline;
-        }
-
-        .flash-messages {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 1000;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            pointer-events: none;
-        }
-
-        .flash-message {
-            padding: 1rem 1.5rem;
-            border-radius: var(--border-radius);
-            color: var(--white);
-            background-color: rgba(0, 0, 0, 0.8);
-            backdrop-filter: blur(5px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            animation: slideIn 0.3s ease-out, fadeOut 3s ease-in forwards;
-            pointer-events: auto;
-            min-width: 200px;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .flash-message.success {
-            background-color: rgba(76, 175, 80, 0.9);
-        }
-
-        .flash-message.error {
-            background-color: rgba(220, 53, 69, 0.9);
-        }
-
-        @keyframes slideIn {
-            from { 
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to { 
-                transform: translateX(0);
-                opacity: 1;
-            }
-        }
-
-        @keyframes fadeOut {
-            0% { opacity: 1; }
-            80% { opacity: 1; }
-            100% { 
-                opacity: 0;
-                transform: translateX(100%);
-            }
-        }
-
-        @keyframes rotate {
-            100% { transform: rotate(360deg); }
-        }
-
-        @keyframes prixClipFix {
-            0% { clip-path: polygon(50% 50%, 0 0, 0 0, 0 0, 0 0, 0 0); }
-            25% { clip-path: polygon(50% 50%, 0 0, 100% 0, 100% 0, 100% 0, 100% 0); }
-            50% { clip-path: polygon(50% 50%, 0 0, 100% 0, 100% 100%, 100% 100%, 100% 100%); }
-            75% { clip-path: polygon(50% 50%, 0 0, 100% 0, 100% 100%, 0 100%, 0 100%); }
-            100% { clip-path: polygon(50% 50%, 0 0, 100% 0, 100% 100%, 0 100%, 0 0); }
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
-        }
-
-        .file-type-group {
-            display: flex;
-            gap: 1rem;
-            align-items: center;
-        }
-
-        .file-type-group select {
-            width: 100px;
-            flex-shrink: 0;
-        }
-
-        .file-type-group input[type="text"] {
-            flex-grow: 1;
-        }
-
-        .current-file {
-            font-size: 0.9rem;
-            color: var(--secondary-color);
-            margin-left: 0.5rem;
-            font-weight: normal;
-        }
-
-        .file-input-group {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-        }
-
-        .file-status {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.5rem;
-            background-color: #f8f9fa;
-            border-radius: var(--border-radius);
-            font-size: 0.9rem;
-        }
-
-        .file-status i {
-            color: var(--secondary-color);
-        }
-
-        .custom-file-input {
-            position: relative;
-            display: inline-block;
-            width: 100%;
-        }
-
-        .custom-file-input input[type="file"] {
-            position: absolute;
-            left: -9999px;
-        }
-
-        .custom-file-label {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            padding: 0.75rem 1rem;
-            background-color: #f8f9fa;
-            border: 2px dashed #ddd;
-            border-radius: var(--border-radius);
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .custom-file-label:hover {
-            border-color: var(--secondary-color);
-            background-color: #e9ecef;
-        }
-
-        .custom-file-label i {
-            font-size: 1.2rem;
-            color: var(--secondary-color);
-        }
-
-        .custom-file-label span {
-            color: #666;
-        }
-
-        .file-selected .custom-file-label {
-            border-style: solid;
-            border-color: var(--secondary-color);
-        }
-
-        @keyframes fadeInScale {
-            from {
-                opacity: 0;
-                transform: translate(-50%, -50%) scale(0.95);
-            }
-            to {
-                opacity: 1;
-                transform: translate(-50%, -50%) scale(1);
-            }
-        }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>IMDb Research Workbench</title>
+  <style>
+    :root { color-scheme: light; --ink: #182923; --muted: #63736d; --line: #dce5df; --green: #24664e; --paper: #fff; --accent: #e9f3eb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f5f7f3; color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; }
+    button, input, select { font: inherit; }
+    button, a, input, select { outline-offset: 4px; }
+    a { color: var(--green); }
+    .shell { max-width: 1160px; margin: auto; padding: 32px 32px 40px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding-bottom: 25px; border-bottom: 1px solid var(--line); }
+    .brand { display: flex; gap: 11px; align-items: center; font-size: 14px; font-weight: 700; letter-spacing: .01em; }
+    .mark { background: var(--ink); color: white; border-radius: 7px; padding: 5px 8px; font-size: 13px; letter-spacing: -.05em; }
+    .badge { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; border: 1px solid var(--line); padding: 5px 10px; border-radius: 20px; background: white; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+    .hero { padding: 35px 0 28px; max-width: 740px; }
+    .eyebrow { margin: 0 0 10px; font-size: 11px; font-weight: 700; letter-spacing: .12em; color: var(--green); text-transform: uppercase; }
+    h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.15; letter-spacing: -.04em; margin: 0 0 13px; font-weight: 650; }
+    .intro { color: var(--muted); margin: 0; max-width: 640px; font-size: 15px; }
+    .grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 20px; align-items: start; }
+    .card { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 25px; }
+    .card-head { display: flex; align-items: center; gap: 11px; margin-bottom: 16px; }
+    .step { display: grid; place-items: center; flex-shrink: 0; background: var(--accent); color: var(--green); border-radius: 8px; width: 32px; height: 32px; font-size: 13px; font-weight: 700; }
+    h2 { font-size: 18px; line-height: 1.3; letter-spacing: -.02em; margin: 0; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .description { margin: 0 0 20px; color: var(--muted); font-size: 14px; }
+    .feature-list { display: flex; gap: 20px; padding: 17px 0; margin-bottom: 7px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .feature-list strong { display: block; font-size: 19px; font-weight: 650; }
+    .feature-list span { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 20px; }
+    button, .download { min-height: 40px; border: 1px solid transparent; border-radius: 7px; padding: 9px 13px; font-size: 13px; font-weight: 650; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+    button { background: var(--green); color: white; }
+    button:hover { background: #194f3b; }
+    button:disabled { background: #e5eae6; color: #7a8680; cursor: not-allowed; }
+    .download { background: white; color: var(--green); border-color: var(--line); }
+    .download:hover { background: var(--accent); }
+    [hidden] { display: none !important; }
+    .report-sheet { background: #fafbf8; border: 1px solid var(--line); border-radius: 8px; padding: 18px; }
+    .report-sheet .eyebrow { font-size: 9px; margin-bottom: 6px; }
+    .report-sheet strong { display: block; font-family: Georgia, serif; font-size: 19px; font-weight: normal; }
+    .report-lines { margin: 11px 0 0; display: grid; gap: 6px; }
+    .report-lines span { height: 4px; display: block; border-radius: 2px; background: #dfe7df; }
+    .report-lines span:last-child { width: 65%; }
+    .status { border: 1px solid var(--line); border-radius: 10px; display: flex; gap: 12px; align-items: flex-start; padding: 14px 17px; margin: 20px 0; background: #edf3ee; }
+    .status strong { display: block; font-size: 12px; margin-bottom: 2px; text-transform: uppercase; letter-spacing: .06em; }
+    .status p { margin: 0; font-size: 13px; color: var(--muted); }
+    .status .dot { margin-top: 6px; flex-shrink: 0; }
+    .status[data-state="failed"] { background: #fff0ec; border-color: #ecd1c6; }
+    .status[data-state="failed"] .dot { background: #a1472b; }
+    .status[data-state="running"] .dot { animation: pulse 1s infinite alternate; }
+    @keyframes pulse { to { opacity: .2; } }
+    .settings-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 21px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    label { display: block; font-size: 12px; font-weight: 650; margin-bottom: 7px; }
+    input[type="text"], select, input[type="file"] { min-width: 0; width: 100%; min-height: 41px; background: #fff; border: 1px solid #cfdad2; border-radius: 6px; padding: 8px 11px; font-size: 13px; color: var(--ink); }
+    input[type="file"] { padding: 6px; }
+    input::file-selector-button { border: 0; border-radius: 4px; padding: 5px 9px; margin-right: 8px; background: #edf2ed; color: var(--ink); font: inherit; }
+    .filename { display: flex; gap: 8px; }
+    .filename select { width: 92px; flex-shrink: 0; }
+    .suffix { display: flex; align-items: center; border: 1px solid #cfdad2; border-radius: 6px; overflow: hidden; }
+    .suffix input { border: 0; border-radius: 0; }
+    .suffix span { font-size: 12px; color: var(--muted); padding: 0 12px; }
+    .hint { display: block; font-size: 11px; color: var(--muted); margin-top: 6px; }
+    details { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 16px; }
+    summary { cursor: pointer; font-size: 13px; font-weight: 650; }
+    details .form-grid { margin-top: 16px; }
+    .checkbox { display: flex; gap: 8px; align-items: center; margin: 18px 0 0; }
+    .checkbox input { accent-color: var(--green); }
+    .form-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 22px; gap: 15px; }
+    footer { display: flex; gap: 20px; justify-content: space-between; margin-top: 25px; color: var(--muted); font-size: 11px; }
+    .flash { padding: 12px 15px; border-radius: 8px; margin-bottom: 15px; background: var(--accent); font-size: 13px; }
+    .flash.error { background: #fff0ec; }
+    @media (max-width: 720px) { .shell { padding: 20px 18px; } .grid, .form-grid { grid-template-columns: 1fr; } .hero { padding-top: 27px; } .card { padding: 20px; } .form-footer, footer { align-items: flex-start; flex-direction: column; } .settings-head { align-items: flex-start; } .topbar .badge { font-size: 10px; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; } }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Edit Configuration</h1>
-        <!-- style="display: none;" -->
-        <div id="loading" class="loading-overlay" style="display: none;">
-            <div class="loading-content">
-                <div class="loading-text-container">
-                    <div class="loading-spinner"></div>
-                    <div class="loading-text">
-                        Processing<span class="loading-dots"><span></span><span></span><span></span></span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                <div class="flash-messages">
-                    {% for category, message in messages %}
-                        <div class="flash-message {{ category }}">
-                            {% if category == 'success' %}
-                                <i>✅</i>
-                            {% elif category == 'error' %}
-                                <i>❌</i>
-                            {% endif %}
-                            {{ message }}
-                        </div>
-                    {% endfor %}
-                </div>
-            {% endif %}
-        {% endwith %}
-
-        <form method="post" enctype="multipart/form-data" class="section">
-            <div class="section-parse">
-                <h2>Parse Stage</h2>
-                <div class="form-group">
-                    <label>Source Filename:</label>
-                    <div class="file-input-group">
-                        {% if input_parse_name and os.path.exists(input_parse_name) %}
-                            <div class="file-status">
-                                <i>📄</i>
-                                <span>Current file: {{ config['parse_stage']['source_filename'] }}</span>
-                            </div>
-                        {% endif %}
-                        <div class="custom-file-input">
-                            <input type="file" id="parse_stage_source_filename" name="parse_stage_source_filename">
-                            <label for="parse_stage_source_filename" class="custom-file-label">
-                                <i>📎</i>
-                                <span>Choose a file or drag it here</span>
-                            </label>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label for="parse_stage_output_filename">Output Filename:</label>
-                    <div class="file-type-group">
-                        <input type="text" id="parse_stage_output_filename" name="parse_stage_output_filename" value="{{ config['parse_stage']['output_filename'] }}" placeholder="Enter filename">
-                        <select id="file_type" name="file_type">
-                            {% for file_type in file_types %}
-                                <option value="{{ file_type }}" {% if config['parse_stage']['file_type'] == file_type %}selected{% endif %}>{{ file_type }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label for="parse_stage_movie_status">Movie Status:</label>
-                    <div class="select-wrapper">
-                        <select id="parse_stage_movie_status" name="parse_stage_movie_status">
-                            {% for movie_status in movie_statuses %}
-                                <option value="{{ movie_status }}" {% if config['parse_stage']['movie_status'] == movie_status %}selected{% endif %}>
-                                    {{ movie_status | title }}
-                                </option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <label class="checkbox-group">
-                        <input type="checkbox" id="parse_stage_with_cast" name="parse_stage_with_cast" {% if config['parse_stage']['with_cast'] %}checked{% endif %}>
-                        <span>Include Cast Information</span>
-                    </label>
-                </div>
-            </div>
-
-            <div class="section-pdf">
-                <h2>PDF Stage</h2>
-                <div class="form-group">
-                    <label for="pdf_stage_output_filename">Output Filename:</label>
-                    <input type="text" class="pdf-input" id="pdf_stage_output_filename" name="pdf_stage_output_filename" value="{{ config['pdf_stage']['output_filename'] }}">
-                </div>
-            </div>
-
-            <div class="button-container">
-                <button type="submit">Save Configuration</button>
-            </div>
-        </form>
-
-        <div class="button-container">
-            <div class="action-group">
-                <button type="button" onclick="startScraping()">Collect Data</button>
-                <a id="dcd" class="download-link" style="display: none;">
-                    <span class="icon">⬇️</span>
-                    <span>Download Collected Data</span>
-                </a>
-            </div>
-            <div class="action-group">
-                <button type="button" onclick="startPdfConverting()">Create PDF</button>
-                <a id="dpdf" class="download-link" style="display: none;">
-                    <span class="icon">⬇️</span>
-                    <span>Download PDF Data</span>
-                </a>
-            </div>
-        </div>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="mark">im</span> Research Workbench</div>
+      <span class="badge"><span class="dot"></span> Local workspace</span>
+    </header>
+    <div class="hero">
+      <p class="eyebrow">IMDb extraction prototype</p>
+      <h1>From movie data to a clear report.</h1>
+      <p class="intro">Explore the research workflow with a small fictional dataset. Export structured data, then turn it into a readable PDF catalog.</p>
     </div>
-
-    <script>
-        let socket;
-
-        document.getElementById('collect-data-form').addEventListener('submit', function(event) {
-            event.preventDefault();
-            startScraping();
-        });
-        document.getElementById('create-pdf-form').addEventListener('submit', function(event) {
-            event.preventDefault();
-            startPdfConverting();
-        });
-
-        function startScraping() {
-            document.getElementById('loading').style.display = 'block';
-            if (!socket) {
-                socket = io();
-
-                socket.on('parse_output', function(data) {
-                    if (data.data === 'Scraping completed!') {
-                        socket.disconnect();
-                        socket = null;
-                        console.log('Socket disconnected');
-                    }
-                });
-            }
-
-            fetch('/run_parse', { method: 'POST' });
-
-            const checkFileInterval = setInterval(() => {
-                fetch('/check_parsed_file')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.file_exists) {
-                        const downloadLink = document.getElementById('dcd');
-                        downloadLink.href = "{{ url_for('download_parse_data') }}";
-                        downloadLink.style.display = 'inline-flex';
-                        document.getElementById('loading').style.display = 'none';
-                        clearInterval(checkFileInterval);
-                    }
-                });
-            }, 15000);
-        }
-
-        function startPdfConverting() {
-            fetch('/run_pdf', { method: 'POST' });
-            document.getElementById('loading').style.display = 'block';
-
-            const checkFileInterval = setInterval(() => {
-                fetch('/check_pdf_file')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.file_exists) {
-                        const downloadLink = document.getElementById('dpdf');
-                        downloadLink.href = "{{ url_for('download_pdf_data') }}";
-                        downloadLink.style.display = 'inline-flex';
-                        document.getElementById('loading').style.display = 'none';
-                        clearInterval(checkFileInterval);
-                    }
-                });
-            }, 500);
-        }
-
-        document.querySelector('input[type="file"]').addEventListener('change', function(e) {
-            const fileName = e.target.files[0]?.name;
-            const fileLabel = this.nextElementSibling.querySelector('span');
-            if (fileName) {
-                fileLabel.textContent = fileName;
-                this.closest('.custom-file-input').classList.add('file-selected');
-            } else {
-                fileLabel.textContent = 'Choose a file or drag it here';
-                this.closest('.custom-file-input').classList.remove('file-selected');
-            }
-        });
-    </script>
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+      <div class="flash {{ category }}" role="alert">{{ message }}</div>
+    {% endfor %}
+    <section class="grid" aria-label="Research workflow">
+      <div class="card">
+        <div class="card-head"><span class="step">01</span><h2>Start with a dataset</h2></div>
+        <p class="description">Try the complete export flow with sample titles, cast and production credits. No account or connection needed.</p>
+        <div class="feature-list">
+          <div><strong>3</strong><span>Fictional movies</span></div>
+          <div><strong>CSV / XLSX</strong><span>Structured exports</span></div>
+          <div><strong>Offline</strong><span>Demo mode</span></div>
+        </div>
+        <div class="actions">
+          <button type="button" data-action="{{ url_for('load_demo') }}">Load demo dataset</button>
+          <a class="download" id="data-download" href="{{ url_for('download_parse_data') }}" {% if not data_exists %}hidden{% endif %}>Download dataset</a>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="step">02</span><h2>Create a shareable report</h2></div>
+        <div class="report-sheet" aria-hidden="true">
+          <p class="eyebrow">Movie research / sample report</p>
+          <strong>A compact view of every title</strong>
+          <div class="report-lines"><span></span><span></span><span></span></div>
+        </div>
+        <div class="actions">
+          <button type="button" id="pdf-button" data-action="{{ url_for('run_pdf') }}" {% if not data_exists %}disabled{% endif %}>Create PDF report</button>
+          <a class="download" id="pdf-download" href="{{ url_for('download_pdf_data') }}" {% if not pdf_exists %}hidden{% endif %}>Download PDF</a>
+        </div>
+      </div>
+    </section>
+    <div class="status" id="task-status" role="status" aria-live="polite" data-state="{{ task_state.status }}">
+      <span class="dot"></span>
+      <div><strong id="status-label">{{ task_state.status | title }}</strong><p id="status-message">{{ task_state.message }}</p></div>
+    </div>
+    <form method="post" enctype="multipart/form-data" class="card" id="settings-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="settings-head"><h2>Export settings</h2><span class="muted">Saved on this device</span></div>
+      <div class="form-grid">
+        <div>
+          <label for="parse_stage_output_filename">Dataset filename</label>
+          <div class="filename">
+            <input type="text" id="parse_stage_output_filename" name="parse_stage_output_filename" value="{{ config.parse_stage.output_filename }}" required maxlength="80" pattern="[A-Za-z0-9][A-Za-z0-9_-]*">
+            <select name="file_type" aria-label="Dataset format">{% for format in file_types %}<option value="{{ format }}" {% if config.parse_stage.file_type == format %}selected{% endif %}>{{ format | upper }}</option>{% endfor %}</select>
+          </div>
+          <span class="hint">Letters, numbers, hyphens and underscores.</span>
+        </div>
+        <div>
+          <label for="pdf_stage_output_filename">Report filename</label>
+          <div class="suffix"><input type="text" id="pdf_stage_output_filename" name="pdf_stage_output_filename" value="{{ config.pdf_stage.output_filename }}" required maxlength="80" pattern="[A-Za-z0-9][A-Za-z0-9_-]*"><span>.pdf</span></div>
+        </div>
+      </div>
+      <details>
+        <summary>Live collection settings · {{ 'enabled' if live_enabled else 'disabled by default' }}</summary>
+        <p class="muted">The original IMDbPro collector is experimental and may need selector updates. A local cookie file and explicit opt-in are required. These settings do not affect the fictional demo.</p>
+        <div class="form-grid">
+          <div>
+            <label for="parse_stage_source_filename">Company source file</label>
+            <input type="file" id="parse_stage_source_filename" name="parse_stage_source_filename" accept=".csv,.xlsx">
+            <span class="hint">CSV or XLSX, up to 10 MB. {% if source_exists %}Current: {{ config.parse_stage.source_filename }}{% else %}No source uploaded.{% endif %}</span>
+          </div>
+          <div>
+            <label for="parse_stage_movie_status">Movie status</label>
+            <select id="parse_stage_movie_status" name="parse_stage_movie_status">{% for status in movie_statuses %}<option value="{{ status }}" {% if config.parse_stage.movie_status == status %}selected{% endif %}>{{ status or 'All statuses' }}</option>{% endfor %}</select>
+          </div>
+        </div>
+        <label class="checkbox"><input type="checkbox" name="parse_stage_with_cast" {% if config.parse_stage.with_cast %}checked{% endif %}> Only include movies with cast information</label>
+        <div class="actions"><button type="button" data-action="{{ url_for('run_parse') }}" data-live-only="true" {% if not live_enabled %}disabled{% endif %}>Collect live data</button></div>
+      </details>
+      <div class="form-footer"><span class="muted">Save changes before creating your next export.</span><button type="submit" id="save-button">Save settings</button></div>
+    </form>
+    <footer><span>Portfolio prototype · Python / Scrapy / Flask</span><span>Independent project. Not affiliated with IMDb.</span></footer>
+  </main>
+  <script>
+    const token = document.querySelector('meta[name="csrf-token"]').content;
+    const liveEnabled = {{ live_enabled | tojson }};
+    let hasData = {{ data_exists | tojson }};
+    let timer;
+    function showStatus(state, message) {
+      document.getElementById('task-status').dataset.state = state;
+      document.getElementById('status-label').textContent = state;
+      document.getElementById('status-message').textContent = message;
+      const busy = state === 'running';
+      document.querySelectorAll('[data-action]').forEach(button => {
+        button.disabled = busy || (button.dataset.liveOnly && !liveEnabled) || (button.id === 'pdf-button' && !hasData);
+      });
+      document.getElementById('save-button').disabled = busy;
+    }
+    async function refreshStatus() {
+      try {
+        const response = await fetch('{{ url_for("task_status") }}', {cache: 'no-store'});
+        if (!response.ok) throw new Error('Could not read task status. Reload the page to reconnect.');
+        const data = await response.json();
+        hasData = data.data_ready;
+        document.getElementById('data-download').hidden = !data.data_ready;
+        document.getElementById('pdf-download').hidden = !data.pdf_ready;
+        showStatus(data.status, data.message);
+        if (data.status === 'running') timer = setTimeout(refreshStatus, 700);
+      } catch (error) { showStatus('failed', error.message); }
+    }
+    document.querySelectorAll('[data-action]').forEach(button => {
+      button.addEventListener('click', async () => {
+        clearTimeout(timer);
+        showStatus('running', 'Preparing your files…');
+        try {
+          const response = await fetch(button.dataset.action, {method: 'POST', headers: {'X-CSRF-Token': token}});
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Could not start this task. Refresh and try again.');
+          await refreshStatus();
+        } catch (error) { showStatus('failed', error.message); }
+      });
+    });
+    if ({{ (task_state.status == 'running') | tojson }}) refreshStatus();
+  </script>
 </body>
 </html>

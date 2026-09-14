@@ -1,178 +1,313 @@
+"""A local, offline-first workbench for the IMDb extraction prototype."""
+
+import hmac
 import os
+import secrets
 import subprocess
+import sys
 from pathlib import Path
-from threading import Thread
+from threading import Lock, Thread
 
-import yaml
-from flask import Flask, render_template, request, redirect, url_for, flash
-from flask import send_from_directory, jsonify
-from flask_socketio import SocketIO
+from flask import (
+    Flask,
+    abort,
+    flash,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
 
-from imdb_extractor.movie_to_pdf_converter import execute
 from settings import (
-    secret_key,
-    CONFIG_FILE_PATH,
-    DATA_FOLDER,
-    UPLOAD_FOLDER,
+    FILE_TYPES,
+    MOVIE_STATUSES,
+    RuntimePaths,
     get_full_output_parse_file_name,
     get_full_output_pdf_file_name,
     get_full_source_parse_file_name,
-    FILE_TYPES,
-    MOVIE_STATUSES,
+    local_file,
+    open_config,
+    save_config,
+    validate_config,
+    validate_filename,
 )
 
-app = Flask(__name__)
-socketio = SocketIO(app)
-app.secret_key = secret_key
-app.config['DATA_FOLDER'] = DATA_FOLDER
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-LAST_COLLECTED_DATA_PATH = None
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 
-@app.context_processor
-def handle_context():
-    return dict(os=os)
+def create_app(config=None):
+    app = Flask(__name__)
+    app.config.from_mapping(
+        SECRET_KEY=os.environ.get('IMDB_SECRET_KEY') or secrets.token_hex(32),
+        IMDB_ROOT=os.environ.get('IMDB_ROOT'),
+        IMDB_ENABLE_LIVE=os.environ.get('IMDB_ENABLE_LIVE', '').lower() == 'true',
+        IMDB_RUN_SYNCHRONOUS=False,
+        MAX_CONTENT_LENGTH=10 * 1024 * 1024,
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE='Strict',
+        TRUSTED_HOSTS=['localhost', '127.0.0.1', '[::1]'],
+    )
+    if config:
+        app.config.update(config)
+    paths = RuntimePaths(app.config['IMDB_ROOT'])
+    app.extensions['runtime_paths'] = paths
+    state = {'status': 'idle', 'kind': None, 'message': 'Ready for an offline demo.'}
+    lock = Lock()
+    mutation_lock = Lock()
+    app.extensions['task_state'] = state
 
+    def csrf_token():
+        if 'csrf_token' not in session:
+            session['csrf_token'] = secrets.token_hex(32)
+        return session['csrf_token']
 
-@app.route('/', methods=['GET', 'POST'])
-def edit_config():
-    if request.method == 'POST':
-        with open(CONFIG_FILE_PATH, 'r') as config_file:
-            config = yaml.safe_load(config_file)
+    app.jinja_env.globals['csrf_token'] = csrf_token
 
-        # Handle file upload
-        if 'parse_stage_source_filename' in request.files:
-            file = request.files['parse_stage_source_filename']
-            if file.filename != '':
-                file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-                file.save(file_path)
-                config['parse_stage']['source_filename'] = (
-                    file.filename
-                )  # Save filename in the config
+    @app.before_request
+    def protect_local_mutations():
+        if request.method == 'POST':
+            supplied = request.form.get('csrf_token') or request.headers.get('X-CSRF-Token', '')
+            expected = session.get('csrf_token', '')
+            if not expected or not hmac.compare_digest(supplied.encode(), expected.encode()):
+                abort(400, description='Refresh this page before submitting the form.')
+            # Serialize request preparation with saving settings. The background
+            # worker is protected by its running state after the request returns.
+            mutation_lock.acquire()
+            g.holds_mutation_lock = True
 
-        # Handle other form fields
-        parse_stage_output_filename = request.form['parse_stage_output_filename']
-        parse_stage_movie_status = request.form['parse_stage_movie_status']
-        parse_stage_file_type = request.form['file_type']
-        parse_stage_with_cast = (
-            True if request.form.get('parse_stage_with_cast') == 'on' else False
+    @app.teardown_request
+    def release_mutation_lock(error=None):
+        if g.pop('holds_mutation_lock', False):
+            mutation_lock.release()
+
+    def is_busy():
+        with lock:
+            return state['status'] == 'running'
+
+    def artifact_path(kind):
+        helper = get_full_output_pdf_file_name if kind == 'pdf' else get_full_output_parse_file_name
+        return Path(helper(paths=paths))
+
+    def artifact_exists(kind):
+        path = artifact_path(kind)
+        try:
+            return path.is_file() and path.stat().st_size > 0
+        except FileNotFoundError:
+            return False
+
+    def launch(kind, action):
+        with lock:
+            if state['status'] == 'running':
+                return jsonify(error='Wait for the current task to finish.'), 409
+            state.update(status='running', kind=kind, message='Preparing your files…')
+
+        def work():
+            try:
+                action()
+            except Exception as error:
+                # Keep subprocess stderr, cookies and machine paths out of the UI.
+                app.logger.warning('%s task failed (%s)', kind, type(error).__name__)
+                with lock:
+                    state.update(
+                        status='failed',
+                        message='The task failed. No new export was produced. Check your local setup and try again.',
+                    )
+            else:
+                with lock:
+                    state.update(
+                        status='completed',
+                        message={
+                            'demo': 'Demo dataset ready: three fictional movie records.',
+                            'pdf': 'Your PDF report is ready to download.',
+                            'parse': 'Collection completed. Your data export is ready.',
+                        }[kind],
+                    )
+
+        if app.config['IMDB_RUN_SYNCHRONOUS']:
+            work()
+        else:
+            Thread(target=work, daemon=True).start()
+        return jsonify(status='accepted'), 202
+
+    @app.route('/', methods=['GET', 'POST'])
+    def edit_config():
+        current = open_config(paths)
+        if request.method == 'POST':
+            if is_busy():
+                flash('Wait for the current task before changing its settings.', 'error')
+                return redirect(url_for('edit_config'))
+            try:
+                previous_parse = dict(current['parse_stage'])
+                previous_pdf = artifact_path('pdf')
+                required = (
+                    'parse_stage_output_filename',
+                    'file_type',
+                    'parse_stage_movie_status',
+                    'pdf_stage_output_filename',
+                )
+                if any(key not in request.form for key in required):
+                    raise ValueError('Complete all export settings before saving.')
+                current['parse_stage'].update(
+                    output_filename=request.form['parse_stage_output_filename'],
+                    file_type=request.form['file_type'],
+                    movie_status=request.form['parse_stage_movie_status'],
+                    with_cast=request.form.get('parse_stage_with_cast') == 'on',
+                )
+                current['pdf_stage']['output_filename'] = request.form['pdf_stage_output_filename']
+                upload = request.files.get('parse_stage_source_filename')
+                if upload and upload.filename:
+                    filename = validate_filename(upload.filename)
+                    current['parse_stage']['source_filename'] = filename
+                current = validate_config(current)
+                if upload and upload.filename:
+                    paths.ensure()
+                    upload.save(local_file(paths.uploads, filename))
+                save_config(current, paths)
+                if current['parse_stage'] != previous_parse or (upload and upload.filename):
+                    # Settings and source changes invalidate derived files, so an
+                    # earlier export cannot appear to match a new configuration.
+                    artifact_path('data').unlink(missing_ok=True)
+                    previous_pdf.unlink(missing_ok=True)
+                    artifact_path('pdf').unlink(missing_ok=True)
+                with lock:
+                    state.update(
+                        status='idle',
+                        kind=None,
+                        message='Settings saved. Your next export will use these options.',
+                    )
+            except ValueError as error:
+                flash(str(error), 'error')
+                return redirect(url_for('edit_config'))
+            flash('Your local settings have been saved.', 'success')
+            return redirect(url_for('edit_config'))
+
+        source = get_full_source_parse_file_name(paths=paths)
+        return render_template(
+            'config_form.html',
+            config=current,
+            file_types=FILE_TYPES,
+            movie_statuses=MOVIE_STATUSES,
+            live_enabled=app.config['IMDB_ENABLE_LIVE'],
+            source_exists=bool(source and Path(source).is_file()),
+            data_exists=artifact_exists('data'),
+            pdf_exists=artifact_exists('pdf'),
+            task_state=dict(state),
         )
-        pdf_stage_output_filename = request.form['pdf_stage_output_filename']
 
-        # Save form data into the YAML config file
-        config['parse_stage']['output_filename'] = parse_stage_output_filename
-        config['parse_stage']['movie_status'] = parse_stage_movie_status
-        config['parse_stage']['file_type'] = parse_stage_file_type
-        config['parse_stage']['with_cast'] = parse_stage_with_cast
-        config['pdf_stage']['output_filename'] = pdf_stage_output_filename
+    @app.get('/task_status')
+    def task_status():
+        with lock:
+            response = dict(state)
+        response.update(data_ready=artifact_exists('data'), pdf_ready=artifact_exists('pdf'))
+        return jsonify(response)
 
-        with open(CONFIG_FILE_PATH, 'w') as config_file:
-            yaml.dump(config, config_file)
+    @app.post('/load_demo')
+    def load_demo():
+        destination = artifact_path('data')
 
-        flash('Configuration saved successfully!', 'success')
-        return redirect(url_for('edit_config'))
+        def action():
+            from imdb_extractor.demo import write_demo_data
 
-    with open(CONFIG_FILE_PATH, 'r') as config_file:
-        config = yaml.safe_load(config_file)
+            paths.ensure()
+            artifact_path('pdf').unlink(missing_ok=True)
+            destination.unlink(missing_ok=True)
+            try:
+                write_demo_data(destination)
+            except Exception:
+                destination.unlink(missing_ok=True)
+                raise
 
-    i_parse_name = get_full_source_parse_file_name()
-    o_parse_name = get_full_output_parse_file_name()
-    o_pdf_name = get_full_output_pdf_file_name()
+        return launch('demo', action)
 
-    return render_template(
-        'config_form.html',
-        config=config,
-        input_parse_name=i_parse_name,
-        output_parse_name=o_parse_name,
-        output_pdf_name=o_pdf_name,
-        file_types=FILE_TYPES,
-        movie_statuses=MOVIE_STATUSES,
-    )
+    @app.post('/run_parse')
+    def run_parse():
+        if not app.config['IMDB_ENABLE_LIVE']:
+            return jsonify(error='Live collection is disabled. Try the offline demo instead.'), 403
+        source = get_full_source_parse_file_name(paths=paths)
+        if not source or not Path(source).is_file():
+            return jsonify(
+                error='Upload and save a company CSV or XLSX before collecting data.'
+            ), 400
+        destination = artifact_path('data')
 
+        def action():
+            paths.ensure()
+            save_config(open_config(paths), paths)
+            artifact_path('pdf').unlink(missing_ok=True)
+            destination.unlink(missing_ok=True)
+            environment = os.environ.copy()
+            environment['IMDB_ROOT'] = str(paths.root)
+            environment['IMDB_ENABLE_LIVE'] = 'true'
+            # run() drains both pipes; stderr cannot deadlock the worker.
+            try:
+                result = subprocess.run(
+                    [sys.executable, '-m', 'imdb_extractor.movie_info_extractor'],
+                    cwd=PROJECT_ROOT,
+                    env=environment,
+                    capture_output=True,
+                    timeout=900,
+                    check=False,
+                )
+                if (
+                    result.returncode != 0
+                    or not destination.is_file()
+                    or destination.stat().st_size == 0
+                ):
+                    raise RuntimeError('Collection did not produce a successful export.')
+            except Exception:
+                destination.unlink(missing_ok=True)
+                raise
 
-@app.route('/check_parsed_file', methods=['GET'])
-def check_parsed_file():
-    if os.path.exists(get_full_output_parse_file_name()):
-        return jsonify({'file_exists': True})
-    else:
-        return jsonify({'file_exists': False})
+        return launch('parse', action)
 
+    @app.post('/run_pdf')
+    def run_pdf():
+        source = artifact_path('data')
+        if not source.is_file() or source.stat().st_size == 0:
+            return jsonify(error='Load the demo or collect a dataset before creating a PDF.'), 400
+        destination = artifact_path('pdf')
 
-@app.route('/check_pdf_file', methods=['GET'])
-def check_pdf_file():
-    if os.path.exists(get_full_output_pdf_file_name()):
-        return jsonify({'file_exists': True})
-    else:
-        return jsonify({'file_exists': False})
+        def action():
+            from imdb_extractor.movie_to_pdf_converter import execute
 
+            paths.ensure()
+            destination.unlink(missing_ok=True)
+            try:
+                execute(str(source), str(destination))
+                if not destination.is_file() or destination.stat().st_size == 0:
+                    raise RuntimeError('PDF creation did not produce an export.')
+            except Exception:
+                destination.unlink(missing_ok=True)
+                raise
 
-def run_spider():
-    """Run the Scrapy spider and emit output to the client."""
-    check_if_the_file_exists_and_delete(get_full_output_parse_file_name())
+        return launch('pdf', action)
 
-    command = ['scrapy', 'runspider', 'movie_info_extractor.py']
-    # command = ['scrapy', 'runspider', 'scraper.py']
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    @app.get('/check_parsed_file')
+    def check_parsed_file():
+        return jsonify(file_exists=artifact_exists('data'))
 
-    while True:
-        output = process.stdout.readline()
-        if output == b'' and process.poll() is not None:
-            break
+    @app.get('/check_pdf_file')
+    def check_pdf_file():
+        return jsonify(file_exists=artifact_exists('pdf'))
 
-    # Emit a final message when done
-    socketio.emit('parse_output', {'data': 'Scraping completed!'})
+    @app.get('/download_parse_data')
+    def download_parse_data():
+        if not artifact_exists('data'):
+            abort(404)
+        return send_file(artifact_path('data'), as_attachment=True)
 
+    @app.get('/download_pdf_data')
+    def download_pdf_data():
+        if not artifact_exists('pdf'):
+            abort(404)
+        return send_file(artifact_path('pdf'), as_attachment=True)
 
-@app.route('/run_parse', methods=['POST'])
-def run_parse():
-    thread = Thread(target=run_spider)
-    thread.start()
-    return redirect(url_for('edit_config'))
-
-
-@socketio.on('connect')
-def handle_connect():
-    print('Client connected')
-
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    print('Client disconnected')
-
-
-@app.route('/run_pdf', methods=['POST'])
-def run_pdf():
-    check_if_the_file_exists_and_delete(get_full_output_pdf_file_name())
-    execute()
-    flash('PDF creation completed!', 'success')
-    return redirect(url_for('edit_config'))
-
-
-@app.route('/download_parse_data', methods=['GET'])
-def download_parse_data():
-    return send_from_directory(
-        app.config['DATA_FOLDER'],
-        get_full_output_parse_file_name(False),
-        as_attachment=True,
-    )
-
-
-@app.route('/download_pdf_data', methods=['GET'])
-def download_pdf_data():
-    return send_from_directory(
-        app.config['DATA_FOLDER'],
-        get_full_output_pdf_file_name(False),
-        as_attachment=True,
-    )
-
-
-def check_if_the_file_exists_and_delete(path):
-    file_path = Path(path)
-    if file_path.exists():
-        file_path.unlink()
+    return app
 
 
 if __name__ == '__main__':
-    if not os.path.exists(UPLOAD_FOLDER):
-        os.makedirs(UPLOAD_FOLDER)
-    app.run(port=8000, debug=True)
+    create_app().run(host='127.0.0.1', port=int(os.environ.get('IMDB_PORT', '8000')), debug=False)

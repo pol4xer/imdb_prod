@@ -1,9 +1,10 @@
-from scrapy import signals
-
+import pandas as pd
 import scrapy
+from scrapy import signals
 from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
-import pandas as pd
+
+from imdb_extractor.live import require_live
 
 
 class IMDB_Producers_Extractor(scrapy.Spider):
@@ -12,7 +13,9 @@ class IMDB_Producers_Extractor(scrapy.Spider):
     producer_url_pattern = 'https://m.imdb.com{}'
     file_path = '/imdb_extractor/data/movies.csv'
 
-    producers_dict = {}
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.producers_dict = {}
 
     @classmethod
     def from_crawler(cls, crawler, *args, **kwargs):
@@ -21,7 +24,8 @@ class IMDB_Producers_Extractor(scrapy.Spider):
         crawler.signals.connect(spider.spider_idle, signals.spider_idle)
         return spider
 
-    def start_requests(self):
+    async def start(self):
+        require_live()
         movies = pd.read_csv(self.file_path).to_dict('records')
         for i, movie in enumerate(movies):
             yield scrapy.Request(
@@ -47,9 +51,7 @@ class IMDB_Producers_Extractor(scrapy.Spider):
                 continue
 
             if producer_name in self.producers_dict:
-                self.producers_dict[producer_name]['movies'].append(
-                    {'name': name, 'link': link}
-                )
+                self.producers_dict[producer_name]['movies'].append({'name': name, 'link': link})
                 self.producers_dict[producer_name]['titles'].append(
                     {'movie': name, 'title': selector.xpath('//p//text()').get()}
                 )
@@ -58,9 +60,7 @@ class IMDB_Producers_Extractor(scrapy.Spider):
                 self.producers_dict[producer_name] = {
                     'name': producer_name,
                     'producer_link': self.producer_url_pattern.format(producer_link),
-                    'titles': [
-                        {'movie': name, 'title': selector.xpath('//p//text()').get()}
-                    ],
+                    'titles': [{'movie': name, 'title': selector.xpath('//p//text()').get()}],
                     'movies': [{'name': name, 'link': link}],
                 }
 
@@ -68,16 +68,16 @@ class IMDB_Producers_Extractor(scrapy.Spider):
         pass
 
     def spider_idle(self, spider):
-        pd.DataFrame.from_dict(
-            self.producers_dict, orient='index'
-        ).reset_index().to_csv('data/producers.csv')
+        pd.DataFrame.from_dict(self.producers_dict, orient='index').to_csv(
+            'data/producers.csv', index=False
+        )
 
     @staticmethod
     def get_headers():
         return {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
             'Accept-Encoding': 'gzip, deflate, br, zstd',
-            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7,de;q=0.6,tr;q=0.5,pl;q=0.4',
+            'Accept-Language': 'en',
             'Priority': 'u=0, i',
             'Sec-Ch-Ua': '"Not/A)Brand";v="8", "Chromium";v="126", "Google Chrome";v="126"',
             'Sec-Ch-Ua-Mobile': '?0',
@@ -92,6 +92,7 @@ class IMDB_Producers_Extractor(scrapy.Spider):
 
 
 if __name__ == '__main__':
+    require_live()
     s = get_project_settings()
     process = CrawlerProcess(s)
     crawler = process.create_crawler(IMDB_Producers_Extractor)

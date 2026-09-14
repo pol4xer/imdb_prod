@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Python ${{ matrix.python }} / offline checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.13']
+    env:
+      POETRY_VIRTUALENVS_IN_PROJECT: 'true'
+      POETRY_NO_INTERACTION: '1'
+      IMDB_ROOT: /tmp/imdb-ci
+      IMDB_ENABLE_LIVE: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - name: Install Poetry
+        run: uv tool install poetry==2.3.2
+      - name: Select the matrix Python interpreter
+        run: poetry env use "$(uv python find)"
+      - run: make install
+      - run: make check
+      - run: make demo

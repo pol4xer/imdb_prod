@@ -8,21 +8,25 @@ from fnc import get
 from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
 
+from imdb_extractor.live import require_live
+
 
 class IMDB_Movies_Extractor(scrapy.Spider):
     name = 'imdb_movies'
     url_api_pages_pattern = 'https://caching.graphql.imdb.com/?{query}'
     config_file_path = 'data/config.json'
     page_limit = 500
-    ids = set()
 
     FEED_FORMAT = 'csv'
     FEED_URI = 'movies.csv'
 
-    def start_requests(self):
-        companies = [
-            v for k, v in json.loads(open(self.config_file_path).read()).items() if v
-        ]
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ids = set()
+
+    async def start(self):
+        require_live()
+        companies = [v for k, v in json.loads(open(self.config_file_path).read()).items() if v]
         query_params = self.get_api_pages_query_params(company_ids=companies)
         yield scrapy.Request(
             self.url_api_pages_pattern.format(query=self.get_query(query_params)),
@@ -136,9 +140,7 @@ class IMDB_Movies_Extractor(scrapy.Spider):
 
     @staticmethod
     def encode_base64(dict_data) -> str:
-        return base64.b64encode(
-            json.dumps(dict_data, separators=(',', ':')).encode()
-        ).decode()
+        return base64.b64encode(json.dumps(dict_data, separators=(',', ':')).encode()).decode()
 
     @staticmethod
     def get_web_headers():
@@ -181,6 +183,7 @@ class IMDB_Movies_Extractor(scrapy.Spider):
 
 
 if __name__ == '__main__':
+    require_live()
     s = get_project_settings()
     process = CrawlerProcess(s)
     crawler = process.create_crawler(IMDB_Movies_Extractor)

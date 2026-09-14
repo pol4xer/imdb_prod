@@ -1,0 +1,8 @@
+parse_stage:
+  file_type: csv
+  movie_status: ''
+  output_filename: demo_movies
+  source_filename: ''
+  with_cast: false
+pdf_stage:
+  output_filename: demo_report
